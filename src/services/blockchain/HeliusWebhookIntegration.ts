@@ -254,41 +254,41 @@ export class HeliusWebhookIntegration extends EventEmitter {
     };
   }
 
-  /**
-   * Test both monitoring methods with a wallet
-   */
-  async testMonitoring(walletAddress: string): Promise<{
-    webSocket: boolean;
-    webhook: boolean;
-  }> {
-    const results = {
-      webSocket: false,
-      webhook: false
-    };
+  // /**
+  //  * Test both monitoring methods with a wallet
+  //  */
+  // async testMonitoring(walletAddress: string): Promise<{
+  //   webSocket: boolean;
+  //   webhook: boolean;
+  // }> {
+  //   const results = {
+  //     webSocket: false,
+  //     webhook: false
+  //   };
 
-    // Test WebSocket
-    if (this.config.useWebSocket && this.webSocketService) {
-      try {
-        const wsHealth = this.webSocketService.getHealth();
-        results.webSocket = wsHealth.connected;
-      } catch (error) {
-        console.error('❌ WebSocket test failed:', error);
-      }
-    }
+  //   // Test WebSocket
+  //   if (this.config.useWebSocket && this.webSocketService) {
+  //     try {
+  //       const wsHealth = this.webSocketService.getHealth();
+  //       results.webSocket = wsHealth.connected;
+  //     } catch (error) {
+  //       console.error('❌ WebSocket test failed:', error);
+  //     }
+  //   }
 
-    // Test Webhook
-    if (this.config.useWebhooks && this.webhookService) {
-      try {
-        await this.webhookService.testWebhook(walletAddress);
-        results.webhook = true;
-      } catch (error) {
-        console.error('❌ Webhook test failed:', error);
-      }
-    }
+  //   // Test Webhook
+  //   if (this.config.useWebhooks && this.webhookService) {
+  //     try {
+  //       await this.webhookService.testWebhook(walletAddress);
+  //       results.webhook = true;
+  //     } catch (error) {
+  //       console.error('❌ Webhook test failed:', error);
+  //     }
+  //   }
 
-    console.log('🧪 Monitoring test results:', results);
-    return results;
-  }
+  //   console.log('🧪 Monitoring test results:', results);
+  //   return results;
+  // }
 
   /**
    * Sync monitored wallets between services
