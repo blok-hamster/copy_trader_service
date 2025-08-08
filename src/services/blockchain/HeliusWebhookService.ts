@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { config, configService } from '../../config';
 import { KOLTrade } from '../../types';
 import axios, { AxiosResponse } from 'axios';
+import { MLService } from '../ml';
 
 //const WEBHOOK_ID = 'c6b11641-ac4a-4588-9ada-561f50cb0652'
 
@@ -454,46 +455,41 @@ export class HeliusWebhookService extends EventEmitter {
           const kolTrade = await this.parseKOLTradeFromWebhook(transaction, walletAddress);
           const {data: {subscriptions}} = await this.cacheService.getSubscriptionsForKOL(walletAddress);
 
-          if (kolTrade) {
-            // console.log('✅ KOL Trade parsed from webhook:', {
-            //   signature: kolTrade.signature,
-            //   wallet: kolTrade.kolWallet,
-            //   type: kolTrade.tradeType,
-            //   dex: kolTrade.dexProgram
-            // });
-
-            //const trades: QueuedTradeParams[] = ko
-
-            //Store the trade in the cache
-            await this.cacheService.storeKOLTrade(kolTrade);
-
-            
-            // Emit the trade event for other services to handle
-            this.emit('kolTrade', kolTrade);
-          } else {
+          if (!kolTrade) {
             console.log('⚠️ Failed to parse KOL trade from webhook');
           }
           
           if(subscriptions.length > 0) {
-          const userSubscriptions = subscriptions.filter((subscription: UserSubscription) => subscription.type === "trade").map((subscription: UserSubscription) => {
-            return {
-              agentId: subscription.userId,
-              tradeType: kolTrade?.tradeType,
-              amount: subscription?.minAmount,
-              privateKey: subscription?.privateKey,
-              mint: kolTrade?.mint, 
-              priority: 'high',
-              watchConfig: subscription.watchConfig ? subscription.watchConfig : null
-            }
-          })
-
-            await callRpcServer({
-              method: 'performBatchTrades',
-              args: {
-                trades: userSubscriptions
+            const userSubscriptions = subscriptions.filter((subscription: UserSubscription) => subscription.type === "trade").map((subscription: UserSubscription) => {
+              return {
+                agentId: subscription.userId,
+                tradeType: kolTrade?.tradeType,
+                amount: subscription?.minAmount,
+                privateKey: subscription?.privateKey,
+                mint: kolTrade?.mint, 
+                priority: 'high',
+                watchConfig: subscription.watchConfig ? subscription.watchConfig : null
               }
             })
-          }
+
+            if(userSubscriptions.length > 0) {
+              await callRpcServer({
+                method: 'performBatchTrades',
+                args: {
+                  trades: userSubscriptions
+                }
+              })
+            }
+          } 
+
+          const mlService = new MLService();
+          const prediction = await mlService.predict({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokenMint: kolTrade!.mint!, buyTimestamp: new Date(kolTrade!.timestamp).toISOString(), lookbackHours: 1});
+          console.log('🤖 Prediction:', prediction);
+
+          //Store the trade in the cache
+          await this.cacheService.storeKOLTrade({...kolTrade!, prediction: prediction});
+          //Emit the trade event for other services to handle
+          this.emit('kolTrade', {...kolTrade!, prediction: prediction});
 
         } else {
           console.log('⚠️ Could not determine wallet address for transaction');
@@ -527,7 +523,7 @@ export class HeliusWebhookService extends EventEmitter {
   /**
    * Find which monitored wallet address this transaction belongs to
    */
-  private async findWalletAddress(transaction: HeliusWebhookData): Promise<string | null> {
+  async findWalletAddress(transaction: HeliusWebhookData): Promise<string | null> {
     // Check in account data
     const {data: {wallets: activeKols}} = await this.cacheService.getWatchedKOLWallets();
     for (const accountInfo of transaction.accountData || []) {
@@ -569,7 +565,7 @@ export class HeliusWebhookService extends EventEmitter {
   /**
    * Parse webhook transaction data into KOLTrade structure
    */
-  private async parseKOLTradeFromWebhook(transaction: HeliusWebhookData, walletAddress: string): Promise<KOLTrade | null> {
+  async parseKOLTradeFromWebhook(transaction: HeliusWebhookData, walletAddress: string): Promise<KOLTrade | null> {
     try {
       // Extract DEX program from description or source
       const dexProgram = this.identifyDEXFromWebhook(transaction);

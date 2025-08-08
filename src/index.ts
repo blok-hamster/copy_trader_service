@@ -167,10 +167,8 @@ class CopyTradingService {
   async  processWebhookData(data: any): Promise<void> {
     try{
       const startTime = Date.now();
-      
-      
-      
       const kolWallet = data[0].feePayer;
+      const kolTrade = await this.webhookService.parseKOLTradeFromWebhook(data[0], kolWallet!);
       
       const {data: {subscriptions}} = await this.cacheService.getSubscriptionsForKOL(kolWallet);
       if (subscriptions.length === 0) {
@@ -180,12 +178,14 @@ class CopyTradingService {
       
       await this.webhookService.processWebhookData(data);
 
+      //console.log('kolTrade:', kolTrade);
+
       //Send notifications to affected users  // Create and publish KOL trade detected event
       const tradeDetectedEvent: KOLTradeDetectedEvent = {
         id: uuidv4(),
         type: 'kol_trade_detected',
         payload: {
-          trade: data,
+          trade: kolTrade!,
           affectedSubscriptions: subscriptions,
           estimatedCopyTrades: subscriptions.length
         },
@@ -194,14 +194,14 @@ class CopyTradingService {
         priority: 'high'
       };
 
+
+      //console.log('tradeDetectedEvent:', tradeDetectedEvent);
       //console.log(`📢 Publishing trade detected event for ${subscriptions.length} subscriptions`);
       await this.messageProcessor.publishEvent(
         configService.config.messaging.routingKeys.kolTradeDetected,
         tradeDetectedEvent
       );
-  
-      // Send notifications to affected users
-      console.log(`📱 Sending notifications to ${subscriptions.length} users`);
+      
       for (const subscription of subscriptions) {
         const notification: NotificationEvent = {
           id: uuidv4(),
@@ -210,9 +210,9 @@ class CopyTradingService {
             userId: subscription.userId,
             notificationType: 'trade_detected',
             data: {
-              trade: data,
+              trade: kolTrade,
               subscription,
-              estimatedCopyAmount: (data.amountIn || 0) * (subscription.copyPercentage / 100)
+              estimatedCopyAmount: (data.amountIn || 0) * (subscription.copyPercentage / 100) || 0
             }
           },
           timestamp: new Date(),

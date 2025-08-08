@@ -1,0 +1,113 @@
+{
+  "version": "1.0.0",
+  "createdAt": "2025-07-19T11:11:27.951Z",
+  "categoricalFeatures": [],
+  "numericFeatures": [
+    "candle_count",
+    "market_cap_candle_count",
+    "price_at_buy",
+    "avg_price",
+    "total_volume_usd",
+    "market_cap_at_buy",
+    "avg_market_cap",
+    "last_available_market_cap",
+    "market_cap_change_24h_percent",
+    "price_change_1h_percent",
+    "price_change_4h_percent",
+    "price_change_24h_percent",
+    "market_cap_change_1h_percent",
+    "market_cap_change_4h_percent",
+    "market_cap_change_24h_percent",
+    "price_volatility_1h",
+    "price_volatility_4h",
+    "price_volatility_24h",
+    "market_cap_volatility_1h",
+    "market_cap_volatility_4h",
+    "market_cap_volatility_24h",
+    "price_atr_24h",
+    "market_cap_atr_24h",
+    "price_range_24h_percent",
+    "market_cap_range_24h_percent",
+    "price_rsi",
+    "market_cap_rsi",
+    "price_macd",
+    "market_cap_macd",
+    "price_sma_20",
+    "market_cap_sma_20",
+    "price_ema_20",
+    "market_cap_ema_20",
+    "price_bollinger_position",
+    "market_cap_bollinger_position",
+    "price_momentum_score",
+    "market_cap_momentum_score",
+    "buy_volume_ratio_24h",
+    "volume_trend_24h",
+    "buy_pressure",
+    "volume_price_correlation"
+  ],
+  "target": "performance_label",
+  "taskType": "classification",
+  "xgbParams": {
+    "objective": "binary:logistic",
+    "max_depth": 8,
+    "eta": 0.05,
+    "min_child_weight": 3,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "gamma": 1,
+    "lambda": 1,
+    "alpha": 0,
+    "num_boost_round": 400
+  },
+  "encoders": [],
+  "metrics": {
+    "taskType": "classification",
+    "accuracy": 0.6890595009596929,
+    "confusionMatrix": [
+      [
+        203,
+        600,
+        0
+      ],
+      [
+        204,
+        1592,
+        0
+      ],
+      [
+        1,
+        5,
+        0
+      ]
+    ],
+    "precision": [
+      0.49754901960784315,
+      0.7246244879380974,
+      0
+    ],
+    "recall": [
+      0.25280199252801994,
+      0.8864142538975501,
+      0
+    ],
+    "f1Score": [
+      0.33526011560693647,
+      0.7973954420235412,
+      0
+    ],
+    "crossValidationScores": [
+      0.7190019193857965,
+      0.6952015355086373,
+      0.7109404990403071,
+      0.710172744721689,
+      0.6449136276391555
+    ]
+  },
+  "isOneVsRest": true,
+  "classes": [
+    "bad",
+    "good",
+    "neutral"
+  ],
+  "numClasses": 3
+}

@@ -22,7 +22,7 @@ export interface KOLTrade {
     amountOut: number;
     tradeType: 'buy' | 'sell';
     mint?: string;
-    dexProgram: string;
+    dexProgram?: string;
     slotNumber?: number;
     blockTime?: number;
     fee?: number;

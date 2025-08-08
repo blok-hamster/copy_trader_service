@@ -43,6 +43,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@inscribable/xg_boost_decision_tree_model": "^1.0.3",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.95.2",
     "@types/uuid": "^9.0.7",

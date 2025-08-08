@@ -132,7 +132,7 @@ export class MessageProcessor extends EventEmitter implements IMessageProcessor 
    * Publish notification to notifications exchange
    */
   async publishNotification(notification: OutboundMessage): Promise<void> {
-    console.log("notification:", notification);
+    //console.log("notification:", notification);
     await this.publishMessage(
       config.messaging.exchanges.notifications,
       config.messaging.routingKeys.notification,
