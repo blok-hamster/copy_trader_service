@@ -10,10 +10,14 @@ import {
   ServiceMetrics
 } from './types';
 import { v4 as uuidv4 } from 'uuid';
-import express, { Express, Request, Response } from 'express';
+import express, { Express, Request, response, Response } from 'express';
 import cors from 'cors';
 import { HeliusWebhookService } from './services/blockchain/HeliusWebhookService';
 import {config} from 'dotenv';
+import { PredictionResult } from '@inscribable/xg_boost_decision_tree_model';
+import { MLService } from './services/ml';
+import { getTokenInfo } from './utils/swapClassifier';
+import axios, { AxiosError } from 'axios';
 
 config();
 
@@ -169,23 +173,41 @@ class CopyTradingService {
       const startTime = Date.now();
       const kolWallet = data[0].feePayer;
       const kolTrade = await this.webhookService.parseKOLTradeFromWebhook(data[0], kolWallet!);
-      
+
       const {data: {subscriptions}} = await this.cacheService.getSubscriptionsForKOL(kolWallet);
       if (subscriptions.length === 0) {
         console.log('⏭️  No subscribers found, skipping notifications but still processing trade');
-        return;
+        return
       }
       
       await this.webhookService.processWebhookData(data);
 
-      //console.log('kolTrade:', kolTrade);
+      const tokenInfo = await getTokenInfo(kolTrade!.mint!);
+      let imageUrl = '';
+      // try{
+      //   const response: any = await axios.get(tokenInfo.uri!);
+      //   if(response.status !== 200){
+      //     console.log('🤖 Token metadata not found, skipping');
+      //   }
+      //   imageUrl = response.data.image || response.data.logoURI;
+      // }catch(error: any){
+      //   if(error instanceof AxiosError){
+      //     console.error('Token metadata not found:', error.response?.data);
+      //   }else{  
+      //     console.error('Failed to get token metadata:', error.message);
+      //   }
+      // }
+
+      const mlService = new MLService();
+      const prediction: PredictionResult = await mlService.predict({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokenMint: kolTrade!.mint!, buyTimestamp: new Date(kolTrade!.timestamp).toISOString(), lookbackHours: 1});
+      //console.log('🤖 Prediction:', prediction);
 
       //Send notifications to affected users  // Create and publish KOL trade detected event
       const tradeDetectedEvent: KOLTradeDetectedEvent = {
         id: uuidv4(),
         type: 'kol_trade_detected',
         payload: {
-          trade: kolTrade!,
+          trade: {...kolTrade!, name: tokenInfo.name!, symbol: tokenInfo.symbol!, image: imageUrl, metadataUri: tokenInfo.uri!, prediction: prediction},
           affectedSubscriptions: subscriptions,
           estimatedCopyTrades: subscriptions.length
         },
@@ -210,7 +232,7 @@ class CopyTradingService {
             userId: subscription.userId,
             notificationType: 'trade_detected',
             data: {
-              trade: kolTrade,
+              trade: {...kolTrade!, name: tokenInfo.name!, symbol: tokenInfo.symbol!, image: imageUrl, prediction: prediction},
               subscription,
               estimatedCopyAmount: (data.amountIn || 0) * (subscription.copyPercentage / 100) || 0
             }
@@ -231,7 +253,11 @@ class CopyTradingService {
       
       console.log(`✅ KOL trade processed in ${processingTime}ms`);
     }catch(error){
-      console.error('Failed to process webhook data:', error);
+      if(error instanceof AxiosError){
+        console.error('Token metadata not found:', error.response?.data);
+      }else{  
+        console.error('Failed to process webhook data:', error);
+      }
     }   
      
   }

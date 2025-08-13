@@ -1,6 +1,7 @@
 import amqp, { Connection, Channel, ConsumeMessage } from 'amqplib';
 import { CacheService } from '../cache/CacheService';
 import { AddressTransaction, HeliusWebhookService, ParsedSwap } from '../blockchain/HeliusWebhookService';
+import { PredictionResult } from '@inscribable/xg_boost_decision_tree_model';
 
 export interface RpcServerOptions {
   /** RabbitMQ connection URL, e.g. 'amqp://localhost' */
@@ -9,6 +10,23 @@ export interface RpcServerOptions {
   queue: string;
   /** The channel prefetch count; defaults to 1 */
   prefetch?: number;
+}
+
+export interface UpdateUserSubscription {
+  userId: string;
+  kolWallet: string;
+  minAmount?: number;
+  maxAmount?: number;
+  tokenBuyCount?: number;
+  settings?: SubscriptionSettings;
+  type: "trade" | "watch";
+  watchConfig?: {
+    takeProfitPercentage?: number;
+    stopLossPercentage?: number;
+    enableTrailingStop?: boolean;
+    trailingPercentage?: number;
+    maxHoldTimeMinutes?: number;
+  }
 }
 
 export interface KOLTrade {
@@ -34,6 +52,7 @@ export interface UserSubscription {
     kolWallet: string;
     isActive: boolean;
     copyPercentage: number; // 0-100%
+    tokenBuyCount?: number; // Number of times to buy a token
     maxAmount?: number;
     minAmount?: number;
     privateKey: string; // Encrypted
@@ -226,6 +245,9 @@ export class RpcServer {
         const unsubscribeFromKOL = await this.heliusWebhookService.unsubscribeFromKOL(args.userId, args.kolWallet);
         const data: IUnsubscribeFromKOL = unsubscribeFromKOL.data
         return data
+      case "updateUserSubscription": //✅
+        const updatedSubscription: UserSubscription | UserSubscription[] = await this.heliusWebhookService.updateUserSubscription(args.subscription);
+        return updatedSubscription;
       case "addKolWalletToWebhook": //✅
         return await this.heliusWebhookService.addKolWalletToWebhook(args.kolWallets);
       case "removeKolWalletFromWebhook": //✅
@@ -238,6 +260,8 @@ export class RpcServer {
         return kolSub;
       case "getSubscriptionsForUser": //✅
         const userSubscriptions = await this.cacheService.getUserSubscriptions(args.userId);
+        console.log("userSubscriptions", userSubscriptions)
+        
         const userSub: UserSubscription[] = userSubscriptions.data.subscriptions
         return userSub;
       case "getKolWallets": //✅
@@ -261,6 +285,9 @@ export class RpcServer {
         });
         const swapTransactionsData: AddressTransaction = swapTransactions.data
         return swapTransactionsData;
+      case "predictTrade": //✅
+        const predictions: PredictionResult[] = await this.heliusWebhookService.predictTrade(args.mints);
+        return predictions;
     //   case "toolsByCategory":
     //     return toolsByCategory(args.category)
       default:

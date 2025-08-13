@@ -1,8 +1,25 @@
 import { Redis } from 'ioredis';
 import { config, configService } from '../../config';
-import { UserSubscription, ServiceMetrics, KOLTrade } from '../../types';
+import { UserSubscription, ServiceMetrics, KOLTrade, SubscriptionSettings } from '../../types';
 //import { HeliusWebhookService } from '../blockchain/HeliusWebhookService';
 import { v4 as uuidv4 } from 'uuid';
+
+export interface UpdateUserSubscription {
+  userId: string;
+  kolWallet: string;
+  minAmount?: number;
+  maxAmount?: number;
+  tokenBuyCount?: number;
+  settings?: SubscriptionSettings;
+  type: "trade" | "watch";
+  watchConfig?: {
+    takeProfitPercentage?: number;
+    stopLossPercentage?: number;
+    enableTrailingStop?: boolean;
+    trailingPercentage?: number;
+    maxHoldTimeMinutes?: number;
+  }
+}
 
 export class CacheService {
   private redis: Redis;
@@ -42,9 +59,19 @@ export class CacheService {
    */
   async connect(): Promise<void> {
     try {
+      // Check if already connected or connecting
+      if (this.redis.status === 'ready' || this.redis.status === 'connecting') {
+        console.log(`🔌 Redis already ${this.redis.status}`);
+        if (this.redis.status === 'ready') {
+          this.isConnected = true;
+        }
+        return;
+      }
+
       console.log(`🔌 Connecting to Redis: ${config.cache.redisUrl}`);
       await this.redis.connect();
       console.log('✅ Connected to Redis');
+      this.isConnected = true;
     } catch (error) {
       console.error('❌ Failed to connect to Redis:', error);
       throw error;
@@ -209,6 +236,68 @@ export class CacheService {
     } catch (error) {
       console.error('Failed to remove subscription:', error);
       throw error;
+    }
+  }
+
+  async updateSubscription(subscription: UpdateUserSubscription): Promise<{message: string, success: boolean, data: {subscription: UserSubscription | UserSubscription[]}}> {
+    try {
+      const {data: {subscriptions: existingSubscriptions}} = await this.getUserSubscriptions(subscription.userId);
+      
+      // Find the existing subscription to update
+      const existingSubscription = existingSubscriptions.find(sub => sub.kolWallet === subscription.kolWallet);
+      
+      if (!existingSubscription) {
+        return {
+          message: "Subscription not found for this KOL wallet",
+          success: false,
+          data: {
+            subscription: existingSubscriptions
+          }
+        };
+      }
+
+      // Remove the old subscription
+      const filteredSubscriptions = existingSubscriptions.filter(
+        sub => sub.kolWallet !== subscription.kolWallet
+      );
+      
+      // Create updated subscription
+      const updatedSubscription: UserSubscription = {
+        ...existingSubscription,
+        ...subscription,
+        userId: subscription.userId, // Ensure userId is preserved
+        id: existingSubscription.id, // Preserve the original ID
+        createdAt: existingSubscription.createdAt, // Preserve creation date
+        updatedAt: new Date() // Update the modification date
+      };
+
+      // Add the updated subscription back
+      filteredSubscriptions.push(updatedSubscription);
+
+      // Save back to Redis
+      const key = configService.getRedisKey(config.cache.keyPrefixes.subscriptions, `user:${subscription.userId}`);
+      await this.redis.setex(
+        key,
+        config.cache.ttl.subscriptions || 86400,
+        JSON.stringify(filteredSubscriptions)
+      );
+
+      return {
+        message: "Subscription updated successfully",
+        success: true,
+        data: {
+          subscription: updatedSubscription
+        }
+      };
+    } catch (error) {
+      console.error('Failed to update subscription:', error);
+      return {
+        message: "Failed to update subscription",
+        success: false,
+        data: {
+          subscription: []
+        }
+      };
     }
   }
 

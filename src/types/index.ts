@@ -12,6 +12,10 @@ export interface KOLTrade {
   amountOut: number;
   tradeType: 'buy' | 'sell';
   mint?: string;
+  name?: string;
+  symbol?: string;
+  image?: string;
+  metadataUri?: string;
   dexProgram?: string;
   slotNumber?: number;
   blockTime?: number;
@@ -28,12 +32,20 @@ export interface UserSubscription {
   copyPercentage: number; // 0-100%
   maxAmount?: number;
   minAmount?: number;
+  tokenBuyCount?: number; // Number of times to buy a token
   privateKey: string; // Encrypted
   walletAddress: string;
   createdAt: Date;
   updatedAt: Date;
   settings?: SubscriptionSettings;
   type: "trade" | "watch",
+  watchConfig?: {
+    takeProfitPercentage?: number;
+    stopLossPercentage?: number;
+    enableTrailingStop?: boolean;
+    trailingPercentage?: number;
+    maxHoldTimeMinutes?: number;
+  }
 }
 
 export interface SubscriptionSettings {
@@ -217,12 +229,14 @@ export interface CacheConfig {
     kolWallets: string;
     tradeHistory: string;
     serviceMetrics: string;
+    tokenPurchases: string;
   };
   ttl: {
     subscriptions: number;
     kolWallets: number;
     tradeHistory: number;
     serviceMetrics: number;
+    tokenPurchases: number;
   };
 }
 

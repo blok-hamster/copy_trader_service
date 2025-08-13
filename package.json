@@ -44,7 +44,9 @@
   },
   "dependencies": {
     "@inscribable/xg_boost_decision_tree_model": "^1.0.3",
+    "@metaplex-foundation/js": "^0.20.1",
     "@solana/spl-token": "^0.4.13",
+    "@solana/spl-token-registry": "^0.2.4574",
     "@solana/web3.js": "^1.95.2",
     "@types/uuid": "^9.0.7",
     "amqplib": "^0.10.3",

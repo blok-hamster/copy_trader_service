@@ -3,7 +3,8 @@ import {
     DataLoader,
     defaultLogger,
     RawDataRecord,
-    PredictionResult
+    PredictionResult,
+    BatchPredictionResult
   } from '@inscribable/xg_boost_decision_tree_model'
   import fs from 'fs'
   import { OHLCVFeatureExtractor } from '../../utils/ohlvc-features-extractor'
@@ -141,11 +142,36 @@ import { OHLCVFeatures } from '../../types/ohlcv-features';
             return {} as PredictionResult
         }
     }
+
+    async predictBatch({modelPath, tokens}: {modelPath: string,  tokens: {tokenMint: string, buyTimestamp: string, lookbackHours: number}[],}):Promise<BatchPredictionResult> {
+        try{
+            const model = await Model.load(modelPath)
+            if(tokens.length === 0){
+                defaultLogger.error(`No tokens provided`)
+                return {} as BatchPredictionResult
+            }
+
+            if(tokens.length > 5){
+                defaultLogger.error(`Too many tokens provided, max is 5`)
+                return {} as BatchPredictionResult
+            }
+
+            const features = await Promise.all(tokens.map(token => this.extractFeatures({tokenMint: token.tokenMint, buyTimestamp: token.buyTimestamp, lookbackHours: token.lookbackHours})))
+            const predictions:BatchPredictionResult = model.predictBatchWithProbabilities(features)
+            return predictions
+        }catch(error){
+        defaultLogger.error(`Error predicting batch: ${error}`)
+        return {} as BatchPredictionResult
+        }
+    }
     
   }
 
 //   const mlService = new MLService();
+//   mlService.predictBatch({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokens: [{tokenMint: '9hdynudAhhWzuNFAnpz7NjvdKMfh9z8mcZKNYHuAUgJQ', buyTimestamp: new Date().toISOString(), lookbackHours: 1}]}).then(prediction => {
+//     console.log('🤖 Prediction:', prediction);
+//   });
+
 //   mlService.predict({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokenMint: '9hdynudAhhWzuNFAnpz7NjvdKMfh9z8mcZKNYHuAUgJQ', buyTimestamp: new Date().toISOString(), lookbackHours: 1}).then(prediction => {
 //     console.log('🤖 Prediction:', prediction);
 //   });
-  //console.log('🤖 Prediction:', prediction);

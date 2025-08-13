@@ -1,15 +1,17 @@
 import { Helius, TransactionType, WebhookType } from 'helius-sdk';
-import { classifySwap, parseSwap, Side } from '../../utils/swapClassifier';
+import { classifySwap, getTokenInfo, parseSwap, Side } from '../../utils/swapClassifier';
 import { callRpcServer } from '../rpc/Rpc_consumer';
 // import express, { Express, Request, Response } from 'express';
 // import cors from 'cors';
 import { CacheService } from '../cache/CacheService';
+import { TokenPurchaseTracker } from '../cache/TokenPurchaseTracker';
 import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
 import { config, configService } from '../../config';
 import { KOLTrade } from '../../types';
 import axios, { AxiosResponse } from 'axios';
 import { MLService } from '../ml';
+import { BatchPredictionResult, PredictionResult } from '@inscribable/xg_boost_decision_tree_model';
 
 //const WEBHOOK_ID = 'c6b11641-ac4a-4588-9ada-561f50cb0652'
 
@@ -18,6 +20,9 @@ export interface ParsedSwap {
   tokenMint: string;
   tokenAmount: number;
   solAmount: number;
+  name?: string;
+  symbol?: string;
+  uri?: string;
 }
 
 export interface AddressTransaction{transactions: ParsedSwap[], pagination?: { before?: string; after?: string; hasMore: boolean }}
@@ -152,6 +157,7 @@ export interface UserSubscription {
   copyPercentage: number; // 0-100%
   maxAmount?: number;
   minAmount?: number;
+  tokenBuyCount?: number; // Number of times to buy a token
   privateKey: string; // Encrypted
   walletAddress: string;
   createdAt: Date;
@@ -166,6 +172,7 @@ export interface UserSubscription {
     maxHoldTimeMinutes?: number;
   }
 }
+
 
 export interface SubscriptionSettings {
   enableSlippageProtection?: boolean;
@@ -182,6 +189,23 @@ export interface SubscriptionSettings {
   };
 }
 
+export interface UpdateUserSubscription {
+  userId: string;
+  kolWallet: string;
+  minAmount?: number;
+  maxAmount?: number;
+  tokenBuyCount?: number;
+  isActive?: boolean;
+  settings?: SubscriptionSettings;
+  type: "trade" | "watch";
+  watchConfig?: {
+    takeProfitPercentage?: number;
+    stopLossPercentage?: number;
+    enableTrailingStop?: boolean;
+    trailingPercentage?: number;
+    maxHoldTimeMinutes?: number;
+  }
+}
 export interface WebhookConfig {
   webhookId: string;
   walletAddress: string;
@@ -215,6 +239,7 @@ export class HeliusWebhookService extends EventEmitter {
   private static instance: HeliusWebhookService;
   private webhookEndpoint = '/helius-webhook';
   private cacheService: CacheService;
+  private tokenPurchaseTracker: TokenPurchaseTracker;
   private webhookID: string;
   constructor(port: number = 3001, webhookID: string = process.env.HELIUS_WEBHOOK_ID || '') {
     super();
@@ -222,6 +247,7 @@ export class HeliusWebhookService extends EventEmitter {
     this.port = port;
     this.helius = new Helius(config.helius.apiKey);
     this.cacheService = CacheService.getInstance();
+    this.tokenPurchaseTracker = TokenPurchaseTracker.getInstance();
   }
 
   static getInstance(port: number = 3001): HeliusWebhookService {
@@ -356,6 +382,16 @@ export class HeliusWebhookService extends EventEmitter {
     }
   }
 
+  async updateUserSubscription(subscription: UpdateUserSubscription): Promise<UserSubscription | UserSubscription[]> {
+    try {
+      const sub = await this.cacheService.updateSubscription(subscription);
+      return sub.data.subscription
+    } catch (error) {
+      console.error('❌ Failed to update user subscription:', error);
+      return [] as UserSubscription[];
+    }
+  }
+
   async unsubscribeFromKOL(userId: string, kolWallet: string): Promise<{message: string, success: boolean, data: {kolWallet: string, userId: string}}> {
     try {
       await this.cacheService.removeSubscription(userId, kolWallet);
@@ -387,35 +423,6 @@ export class HeliusWebhookService extends EventEmitter {
   }
 
   /**
-   * Handle incoming webhook requests
-   */
-//   private async handleWebhookRequest(req: Request, res: Response): Promise<void> {
-//     try {
-//       const webhookData = req.body;
-      
-//       console.log('🎣 Received webhook data:', JSON.stringify(webhookData, null, 2));
-
-//       // Acknowledge receipt immediately
-//       res.status(200).json({ 
-//         success: true, 
-//         message: 'Webhook received',
-//         timestamp: new Date().toISOString()
-//       });
-
-//       // Process the webhook data
-//       await this.processWebhookData(webhookData);
-
-//     } catch (error) {
-//       console.error('❌ Error handling webhook request:', error);
-//       res.status(500).json({ 
-//         success: false, 
-//         error: 'Internal server error',
-//         timestamp: new Date().toISOString()
-//       });
-//     }
-//   }
-
-  /**
    * Process webhook data and convert to KOL trades
    */
   async processWebhookData(data: any): Promise<void> {
@@ -431,16 +438,33 @@ export class HeliusWebhookService extends EventEmitter {
     }
   }
 
+  async predictTrade(mints: string[]): Promise<PredictionResult[]> {
+    try{
+      const mlService = new MLService();
+
+      const tokens = mints.map(mint => ({
+        tokenMint: mint,
+        buyTimestamp: new Date().toISOString(),
+        lookbackHours: 1
+      }));
+      const tokenInfo = await Promise.all(mints.map(mint => getTokenInfo(mint)));
+      const predictions = await mlService.predictBatch({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokens: tokens});
+      const predictionsWithTokenInfo = predictions.predictions.map((prediction, index) => ({
+        ...prediction,
+        tokenInfo: tokenInfo[index]
+      }));
+      return predictionsWithTokenInfo;
+    }catch(error){
+      console.error('❌ Error predicting trade:', error);
+      return [] as PredictionResult[];
+    }
+  }
+
   /**
    * Process individual transaction from webhook
    */
   private async processTransaction(transaction: HeliusWebhookData): Promise<void> {
     try {
-      // console.log(`🔍 Processing transaction: ${transaction.signature}`);
-      // console.log(`📝 Description: ${transaction.description}`);
-      // console.log(`🏷️  Type: ${transaction.type}`);
-      
-
       // Check if this is a swap transaction
       if (this.isSwapTransaction(transaction)) {
         console.log(`🔄 Swap transaction detected: ${transaction.signature}`);
@@ -460,36 +484,83 @@ export class HeliusWebhookService extends EventEmitter {
           }
           
           if(subscriptions.length > 0) {
-            const userSubscriptions = subscriptions.filter((subscription: UserSubscription) => subscription.type === "trade").map((subscription: UserSubscription) => {
-              return {
-                agentId: subscription.userId,
-                tradeType: kolTrade?.tradeType,
-                amount: subscription?.minAmount,
-                privateKey: subscription?.privateKey,
-                mint: kolTrade?.mint, 
-                priority: 'high',
-                watchConfig: subscription.watchConfig ? subscription.watchConfig : null
+            // Filter subscriptions for trade type and apply token purchase limits
+            const eligibleSubscriptions: any[] = [];
+            const tradeSubscriptions = subscriptions.filter((subscription: UserSubscription) => subscription.type === "trade");
+            
+            // Process each subscription with token purchase limit checks
+            for (const subscription of tradeSubscriptions) {
+              // Check if subscription has watchConfig and tokenBuyCount limit
+              if (subscription.watchConfig && subscription.tokenBuyCount && subscription.tokenBuyCount > 0) {
+                // Fast token purchase limit validation - executes in <1ms
+                const validation = await this.tokenPurchaseTracker.canUserPurchaseToken(
+                  subscription.userId,
+                  kolTrade?.mint || '',
+                  subscription.tokenBuyCount
+                );
+                
+                if (validation.canPurchase) {
+                  // Atomically increment and validate the purchase count
+                  const result = await this.tokenPurchaseTracker.incrementAndValidatePurchase(
+                    subscription.userId,
+                    kolTrade?.mint || '',
+                    subscription.tokenBuyCount,
+                    subscription.id
+                  );
+                  
+                  if (result.success) {
+                    console.log(`✅ Token purchase approved for user ${subscription.userId}, token ${kolTrade?.mint}, count: ${result.newCount}/${subscription.tokenBuyCount}`);
+                    eligibleSubscriptions.push({
+                      agentId: subscription.userId,
+                      tradeType: kolTrade?.tradeType,
+                      amount: subscription?.minAmount,
+                      privateKey: subscription?.privateKey,
+                      mint: kolTrade?.mint, 
+                      priority: 'high',
+                      watchConfig: subscription.watchConfig
+                    });
+                  } else {
+                    console.log(`🚫 Token purchase limit reached for user ${subscription.userId}, token ${kolTrade?.mint}, limit: ${subscription.tokenBuyCount}`);
+                  }
+                } else {
+                  console.log(`🚫 Token purchase limit already reached for user ${subscription.userId}, token ${kolTrade?.mint}, current: ${validation.currentCount}/${validation.maxCount}`);
+                }
+              } else {
+                // No token purchase limits - process normally
+                eligibleSubscriptions.push({
+                  agentId: subscription.userId,
+                  tradeType: kolTrade?.tradeType,
+                  amount: subscription?.minAmount,
+                  privateKey: subscription?.privateKey,
+                  mint: kolTrade?.mint, 
+                  priority: 'high',
+                  watchConfig: subscription.watchConfig ? subscription.watchConfig : null
+                });
               }
-            })
+            }
 
-            if(userSubscriptions.length > 0) {
+            // Execute trades for eligible subscriptions
+            if(eligibleSubscriptions.length > 0) {
+              console.log(`🚀 Executing ${eligibleSubscriptions.length} eligible trades out of ${tradeSubscriptions.length} total subscriptions`);
               await callRpcServer({
                 method: 'performBatchTrades',
                 args: {
-                  trades: userSubscriptions
+                  trades: eligibleSubscriptions
                 }
               })
+            } else {
+              console.log(`⏭️  No eligible subscriptions for trade execution (all limits reached or no subscriptions)`);
             }
           } 
 
-          const mlService = new MLService();
-          const prediction = await mlService.predict({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokenMint: kolTrade!.mint!, buyTimestamp: new Date(kolTrade!.timestamp).toISOString(), lookbackHours: 1});
-          console.log('🤖 Prediction:', prediction);
+          // const mlService = new MLService();
+          // const prediction: PredictionResult = await mlService.predict({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokenMint: kolTrade!.mint!, buyTimestamp: new Date(kolTrade!.timestamp).toISOString(), lookbackHours: 1});
+          // console.log('🤖 Prediction:', prediction);
 
           //Store the trade in the cache
-          await this.cacheService.storeKOLTrade({...kolTrade!, prediction: prediction});
+          await this.cacheService.storeKOLTrade(kolTrade!);
           //Emit the trade event for other services to handle
-          this.emit('kolTrade', {...kolTrade!, prediction: prediction});
+          this.emit('kolTrade', kolTrade!);
 
         } else {
           console.log('⚠️ Could not determine wallet address for transaction');
@@ -571,7 +642,7 @@ export class HeliusWebhookService extends EventEmitter {
       const dexProgram = this.identifyDEXFromWebhook(transaction);
       
       // Parse trade details from token transfers
-      const { tradeType, tokenIn, tokenOut, amountIn, amountOut, mint } = this.parseTradeDetailsFromWebhook(transaction);
+      const { tradeType, tokenIn, tokenOut, amountIn, amountOut, mint } = await this.parseTradeDetailsFromWebhook(transaction);
       
       return {
         id: uuidv4(),
@@ -629,14 +700,14 @@ export class HeliusWebhookService extends EventEmitter {
   /**
    * Parse trade details from webhook token transfers
    */
-  private parseTradeDetailsFromWebhook(transaction: HeliusWebhookData): {
+  private async parseTradeDetailsFromWebhook(transaction: HeliusWebhookData): Promise<{
     tradeType: 'buy' | 'sell';
     tokenIn: string;
     tokenOut: string;
     amountIn: number;
     amountOut: number;
     mint: string;
-  } {
+  }> {
     let tradeType: 'buy' | 'sell'  = 'buy';
     let tokenIn = 'UNKNOWN';
     let tokenOut = 'UNKNOWN';
@@ -669,41 +740,7 @@ export class HeliusWebhookService extends EventEmitter {
           
       }
 
-      // Look at native transfers for SOL trades
-      // if (transaction.nativeTransfers && transaction.nativeTransfers.length > 0) {
-      //   const nativeTransfer = transaction.nativeTransfers[0];
-      //   const amount = Math.abs(nativeTransfer.amount || 0) / 1e9; // Convert from lamports to SOL
-
-      //   if (amount > 0) {
-      //     // Determine if buying or selling SOL
-      //     const solMint = 'So11111111111111111111111111111111111111112';
-          
-      //     if (tokenIn === 'UNKNOWN' && tokenOut !== 'UNKNOWN') {
-      //       tokenIn = solMint;
-      //       amountIn = amount;
-      //       tradeType = 'buy'; // SOL -> Token
-      //     } else if (tokenOut === 'UNKNOWN' && tokenIn !== 'UNKNOWN') {
-      //       tokenOut = solMint;
-      //       amountOut = amount;
-      //       tradeType = 'sell'; // Token -> SOL
-      //     }
-      //   }
-      // }
-
-      // Try to parse from description if amounts are still unknown
-      // if (amountIn === 0 && amountOut === 0) {
-      //   const description = transaction.description || '';
-      //   const amountMatch = description.match(/(\d+(?:\.\d+)?)\s*(SOL|USDC|USDT)/i);
-      //   if (amountMatch && amountMatch[1] && amountMatch[2]) {
-      //     const amount = parseFloat(amountMatch[1]);
-      //     const token = amountMatch[2].toUpperCase();
-          
-      //     if (token === 'SOL') {
-      //       amountIn = amount;
-      //       tokenIn = 'So11111111111111111111111111111111111111112';
-      //     }
-      //   }
-      // }
+     
     } catch (error) {
       console.error('❌ Error parsing trade details from webhook:', error);
     }
@@ -788,27 +825,28 @@ export class HeliusWebhookService extends EventEmitter {
         //console.log("response:", response);
         
         const transactions = response.data;
-        const parsed = transactions.map((tx) => {
-          const txData = {
-            tokenTransfers: (tx.tokenTransfers || []).map(transfer => ({
-              fromTokenAccount: transfer.fromTokenAccount,
-              fromUserAccount: transfer.fromUserAccount,
-              mint: transfer.mint,
-              toTokenAccount: transfer.toTokenAccount,
-              toUserAccount: transfer.toUserAccount,
-              tokenAmount: transfer.tokenAmount,
-              tokenStandard: 'Fungible' as const
-            })),
-            accountData: (tx.accountData || []).map(acc => ({
-              account: acc.account,
-              nativeBalanceChange: acc.nativeBalanceChange,
-              tokenBalanceChanges: acc.tokenBalanceChanges || []
-            }))
-          };
-          
-          const swapData = parseSwap(txData, address);
-          return swapData;
-        });
+        const parsed = await Promise.all(
+          transactions.map(async (tx) => {
+            const txData = {
+              tokenTransfers: (tx.tokenTransfers || []).map(transfer => ({
+                fromTokenAccount: transfer.fromTokenAccount,
+                fromUserAccount: transfer.fromUserAccount,
+                mint: transfer.mint,
+                toTokenAccount: transfer.toTokenAccount,
+                toUserAccount: transfer.toUserAccount,
+                tokenAmount: transfer.tokenAmount,
+                tokenStandard: 'Fungible' as const
+              })),
+              accountData: (tx.accountData || []).map(acc => ({
+                account: acc.account,
+                nativeBalanceChange: acc.nativeBalanceChange,
+                tokenBalanceChanges: acc.tokenBalanceChanges || []
+              }))
+            };
+
+            return await parseSwap(txData, address);
+          })
+        );
         
         //console.log(`✅ Retrieved ${transactions.length} transactions for address: ${address}`);
         
@@ -823,7 +861,7 @@ export class HeliusWebhookService extends EventEmitter {
         }
         
         const data = {
-          transactions: parsed.filter((swap): swap is ParsedSwap => swap !== null),
+          transactions: parsed,
           ...(pagination && { pagination })
         };
   
@@ -943,27 +981,4 @@ export class HeliusWebhookService extends EventEmitter {
       heliusEnvironment: config.helius.environment
     };
   }
-
-  // /**
-  //  * Test webhook functionality
-  //  */
-  // async testWebhook(walletAddress: string): Promise<void> {
-  //   const webhookConfig = this.webhooks.get(walletAddress);
-  //   if (!webhookConfig) {
-  //     throw new Error(`No webhook found for wallet: ${walletAddress}`);
-  //   }
-
-  //   try {
-  //     // You can trigger a test from Helius dashboard or use their test endpoint
-  //     console.log(`🧪 Testing webhook for wallet: ${walletAddress}`);
-  //     console.log(`🆔 Webhook ID: ${webhookConfig.webhookId}`);
-  //     console.log(`📡 Webhook URL: ${webhookConfig.webhookURL}`);
-      
-  //     // This would typically be done via Helius dashboard test button
-  //     console.log('✅ Test webhook request completed - check Helius dashboard for results');
-  //   } catch (error) {
-  //     console.error(`❌ Failed to test webhook for ${walletAddress}:`, error);
-  //     throw error;
-  //   }
-  // }
 } 

@@ -71,13 +71,15 @@ class ConfigService {
           subscriptions: process.env.SUBSCRIPTION_KEY_PREFIX || 'sub:',
           kolWallets: process.env.KOL_WALLET_KEY_PREFIX || 'kol:',
           tradeHistory: process.env.TRADE_HISTORY_KEY_PREFIX || 'trade:',
-          serviceMetrics: process.env.METRICS_KEY_PREFIX || 'metrics:'
+          serviceMetrics: process.env.METRICS_KEY_PREFIX || 'metrics:',
+          tokenPurchases: process.env.TOKEN_PURCHASE_KEY_PREFIX || 'token_purchases:'
         },
         ttl: {
           subscriptions: parseInt(process.env.SUBSCRIPTION_TTL || '0', 10), // 0 = no expiry
           kolWallets: parseInt(process.env.KOL_WALLET_TTL || '0', 10), // 0 = no expiry
           tradeHistory: parseInt(process.env.TRADE_HISTORY_TTL || '86400', 10), // 24 hours
-          serviceMetrics: parseInt(process.env.METRICS_TTL || '60', 10) // 1 minute
+          serviceMetrics: parseInt(process.env.METRICS_TTL || '60', 10), // 1 minute
+          tokenPurchases: parseInt(process.env.TOKEN_PURCHASE_TTL || '86400', 10) // 24 hours
         }
       },
       

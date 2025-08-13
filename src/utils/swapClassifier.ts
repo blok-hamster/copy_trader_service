@@ -1,3 +1,8 @@
+import { Connection, PublicKey } from "@solana/web3.js";
+import { TokenListProvider } from "@solana/spl-token-registry";
+import { config } from "dotenv";
+config();
+
 type TokenTransfer = {
     fromTokenAccount: string;
     fromUserAccount: string;
@@ -105,6 +110,9 @@ export interface RawTokenAmount {
   export type Side = 'buy' | 'sell' | 'unknown';
   
   export interface ParsedSwap {
+    name?: string;
+    symbol?: string;
+    uri?: string;
     side: Side;
     tokenMint: string;
     tokenAmount: number;
@@ -186,6 +194,8 @@ export interface RawTokenAmount {
       side = 'sell';
     }
 
+    //const tokenInfo = await getTokenInfo(tokenMint);
+
     return {
       side,
       tokenMint,
@@ -197,6 +207,169 @@ export interface RawTokenAmount {
       return {} as ParsedSwap;
     }
   }
+
+  
+
+const extractHttpsUrl = (s: string): string | null => {
+  const match = s.match(/https?:\/\/[^\s'",)\]}]+/);
+  return match ? match[0] : null;
+};
+
+// 1. Solana RPC endpoint (gRPC or HTTP)
+const RPC_URL = process.env.RPC_URL!;
+
+// If you need fetch in Node < 18 uncomment this:
+// import fetch from "node-fetch";
+
+type LookupResult = {
+  source: "token-registry" | "metaplex-on-chain" | "mint-account" | "unknown";
+  name?: string;
+  symbol?: string;
+  logoURI?: string;
+  uri?: string; // metadata URI if present
+  decimals?: number;
+  supply?: string;
+  raw?: any;
+};
+
+const METADATA_PROGRAM_ID = new PublicKey(
+  "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+);
+
+/**
+ * Try Token Registry -> on-chain Metaplex metadata -> mint account
+ */
+export async function getTokenInfo(
+  mintAddress: string,
+  rpcUrl = RPC_URL
+): Promise<LookupResult> {
+  const connection = new Connection(rpcUrl, "confirmed");
+  const mintPub = new PublicKey(mintAddress);
+  const mintBase58 = mintPub.toBase58();
+
+  // 1) Token Registry (fast, includes logos, symbols, common names)
+  try {
+    const tokenListContainer = await new TokenListProvider().resolve();
+    const tokenList = tokenListContainer
+      .filterByClusterSlug("mainnet-beta")
+      .getList();
+
+    const token = tokenList.find((t:any) => t.address === mintBase58);
+    if (token) {
+      return {
+        source: "token-registry",
+        name: token.name,
+        symbol: token.symbol,
+        logoURI: extractHttpsUrl(token.logoURI!) || "",
+        uri: extractHttpsUrl((token as any).extensions?.coingeckoId!) || "",
+        raw: token,
+      };
+    }
+  } catch (err) {
+    // registry failed — continue to next step
+    console.warn("Token registry lookup failed:", (err as Error).message);
+  }
+
+  // 2) Try on-chain Metaplex Metadata account (many fungible tokens use it)
+  try {
+    const [metadataPDA] = await PublicKey.findProgramAddress(
+      [
+        Buffer.from("metadata"),
+        METADATA_PROGRAM_ID.toBuffer(),
+        mintPub.toBuffer(),
+      ],
+      METADATA_PROGRAM_ID
+    );
+
+    const acctInfo = await connection.getAccountInfo(metadataPDA);
+    if (acctInfo && acctInfo.data) {
+      const parsed = decodeMetaplexMetadataSimple(acctInfo.data);
+      // parsed: { name, symbol, uri }
+      return {
+        source: "metaplex-on-chain",
+        name: parsed.name,
+        symbol: parsed.symbol,
+        uri: extractHttpsUrl(parsed.uri) || "",
+        raw: parsed,
+      };
+    }
+  } catch (err) {
+    console.warn("On-chain Metaplex metadata lookup failed:", (err as Error).message);
+  }
+
+  // 3) Fallback: read mint account (no name, but decimals/supply)
+  try {
+    const parsed = await connection.getParsedAccountInfo(mintPub);
+    if (parsed.value && parsed.value.data) {
+      // structure of parsed value from getParsedAccountInfo:
+      // parsed.value.data.parsed.info.decimals / supply
+      // But be defensive in typing:
+      const maybe = (parsed.value.data as any).parsed ?? (parsed.value.data as any);
+      const info = maybe?.info ?? maybe;
+      const decimals = info?.decimals ?? undefined;
+      const supply = info?.supply ?? undefined;
+      return {
+        source: "mint-account",
+        decimals,
+        supply,
+        raw: parsed.value,
+      };
+    }
+  } catch (err) {
+    console.warn("Mint account lookup failed:", (err as Error).message);
+  }
+
+  // Nothing found
+  return { source: "unknown" };
+}
+
+/**
+ * Lightweight parser for Metaplex metadata account using the common fixed-length layout.
+ * NOTE: This simple parser assumes the legacy fixed-length fields:
+ *   name: 32 bytes, symbol: 10 bytes, uri: 200 bytes
+ * This works for most tokens that use the v1 metadata layout.
+ *
+ * If you need full support for newer metadata structures, use
+ * @metaplex-foundation/mpl-token-metadata's deserializer.
+ */
+function decodeMetaplexMetadataSimple(data: Buffer | Uint8Array) {
+  const buf = Buffer.from(data);
+  // Skips: key (1) + updateAuthority (32) + mint (32) = 65 bytes
+  let offset = 1 + 32 + 32;
+  const NAME_LEN = 32;
+  const SYMBOL_LEN = 10;
+  const URI_LEN = 200;
+
+  const name = buf
+    .slice(offset, offset + NAME_LEN)
+    .toString("utf8")
+    .replace(/\0/g, "")
+    .trim();
+  offset += NAME_LEN;
+
+  const symbol = buf
+    .slice(offset, offset + SYMBOL_LEN)
+    .toString("utf8")
+    .replace(/\0/g, "")
+    .trim();
+  offset += SYMBOL_LEN;
+
+  const uri = buf
+    .slice(offset, offset + URI_LEN)
+    .toString("utf8")
+    .replace(/\0/g, "")
+    .trim();
+
+  return { name, symbol, uri };
+}
+
+
+// (async () => {
+//   const mint = "2e1ZJUrpvPa8MC2U3vr5gDyL3myNbA8XGJ6hK2ToJtM5"; // wrapped SOL example
+//   const info = await getTokenInfo(mint);
+//   console.log(info);
+// })();
+
 
 // if (require.main === module) {
 //   const sampleTransfers: TokenTransfer[] = [
