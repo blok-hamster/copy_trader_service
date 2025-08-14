@@ -175,10 +175,10 @@ class CopyTradingService {
       const kolTrade = await this.webhookService.parseKOLTradeFromWebhook(data[0], kolWallet!);
 
       const {data: {subscriptions}} = await this.cacheService.getSubscriptionsForKOL(kolWallet);
-      if (subscriptions.length === 0) {
-        console.log('⏭️  No subscribers found, skipping notifications but still processing trade');
-        return
-      }
+      // if (subscriptions.length === 0) {
+      //   console.log('⏭️  No subscribers found, skipping notifications but still processing trade');
+      //   retur
+      // }
       
       await this.webhookService.processWebhookData(data);
 
@@ -197,9 +197,11 @@ class CopyTradingService {
       //     console.error('Failed to get token metadata:', error.message);
       //   }
       // }
-
-      const mlService = new MLService();
-      const prediction: PredictionResult = await mlService.predict({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokenMint: kolTrade!.mint!, buyTimestamp: new Date(kolTrade!.timestamp).toISOString(), lookbackHours: 1});
+      let prediction: PredictionResult = {} as PredictionResult;
+      if(kolWallet === 'suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK'){
+        const mlService = new MLService();
+        prediction = await mlService.predict({modelPath: process.cwd() + '/src/services/ml/models/cupsey_ohlcv_model', tokenMint: kolTrade!.mint!, buyTimestamp: new Date(kolTrade!.timestamp).toISOString(), lookbackHours: 1});
+      }
       //console.log('🤖 Prediction:', prediction);
 
       //Send notifications to affected users  // Create and publish KOL trade detected event
