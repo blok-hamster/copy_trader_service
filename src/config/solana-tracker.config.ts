@@ -17,7 +17,7 @@ export const solanaTrackerConfig: SolanaTrackerConfig = {
   endpoint: 'https://data.solanatracker.io',
   headers: {
     'Content-Type': 'application/json',
-    'x-api-key': process.env.SOLANA_TRACKER_API_KEY || '9c349957-218c-49d5-ac1e-b8f0b676f0e3',
+    'x-api-key': process.env.SOLANA_TRACKER_API_KEY || '',
   },
   rateLimit: {
     requestsPerSecond: 1, // Default free tier has 1 request per second

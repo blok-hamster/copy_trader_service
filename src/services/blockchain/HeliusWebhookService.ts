@@ -491,51 +491,58 @@ export class HeliusWebhookService extends EventEmitter {
             // Process each subscription with token purchase limit checks
             for (const subscription of tradeSubscriptions) {
               // Check if subscription has watchConfig and tokenBuyCount limit
-              if (subscription.watchConfig && subscription.tokenBuyCount && subscription.tokenBuyCount > 0) {
-                // Fast token purchase limit validation - executes in <1ms
-                const validation = await this.tokenPurchaseTracker.canUserPurchaseToken(
-                  subscription.userId,
-                  kolTrade?.mint || '',
-                  subscription.tokenBuyCount
-                );
-                
-                if (validation.canPurchase) {
-                  // Atomically increment and validate the purchase count
-                  const result = await this.tokenPurchaseTracker.incrementAndValidatePurchase(
+              if(subscription.isActive === true){
+                if (subscription.watchConfig && subscription.tokenBuyCount && subscription.tokenBuyCount > 0) {
+                  // Fast token purchase limit validation - executes in <1ms
+                  const validation = kolTrade?.tradeType === 'buy' ? await this.tokenPurchaseTracker.canUserPurchaseToken(
                     subscription.userId,
                     kolTrade?.mint || '',
-                    subscription.tokenBuyCount,
-                    subscription.id
-                  );
+                    subscription.tokenBuyCount
+                  ) : {
+                    canPurchase: true,
+                    currentCount: 0,
+                    maxCount: subscription.tokenBuyCount,
+                    remainingPurchases: subscription.tokenBuyCount
+                  };
                   
-                  if (result.success) {
-                    console.log(`✅ Token purchase approved for user ${subscription.userId}, token ${kolTrade?.mint}, count: ${result.newCount}/${subscription.tokenBuyCount}`);
-                    eligibleSubscriptions.push({
-                      agentId: subscription.userId,
-                      tradeType: kolTrade?.tradeType,
-                      amount: subscription?.minAmount,
-                      privateKey: subscription?.privateKey,
-                      mint: kolTrade?.mint, 
-                      priority: 'high',
-                      watchConfig: subscription.watchConfig
-                    });
-                  } else {
-                    console.log(`🚫 Token purchase limit reached for user ${subscription.userId}, token ${kolTrade?.mint}, limit: ${subscription.tokenBuyCount}`);
-                  }
+                  if (validation.canPurchase) {
+                    // Atomically increment and validate the purchase count
+                    const result = kolTrade?.tradeType === 'buy' ? await this.tokenPurchaseTracker.incrementAndValidatePurchase(
+                      subscription.userId,
+                      kolTrade?.mint || '',
+                      subscription.tokenBuyCount,
+                      subscription.id
+                    ) : {
+                      success: true,
+                      newCount: 0,
+                      wasAtLimit: false
+                    };
+                    
+                    if (result.success) {
+                      console.log(`✅ Token purchase approved for user ${subscription.userId}, token ${kolTrade?.mint}, count: ${result.newCount}/${subscription.tokenBuyCount}`);
+                      eligibleSubscriptions.push({
+                        agentId: subscription.userId,
+                        tradeType: kolTrade?.tradeType,
+                        amount: subscription?.minAmount,
+                        privateKey: subscription?.privateKey,
+                        mint: kolTrade?.mint, 
+                        priority: 'high',
+                        watchConfig: subscription.watchConfig
+                      });
+                    } 
+                  } 
                 } else {
-                  console.log(`🚫 Token purchase limit already reached for user ${subscription.userId}, token ${kolTrade?.mint}, current: ${validation.currentCount}/${validation.maxCount}`);
+                  // No token purchase limits - process normally
+                  eligibleSubscriptions.push({
+                    agentId: subscription.userId,
+                    tradeType: kolTrade?.tradeType,
+                    amount: subscription?.minAmount,
+                    privateKey: subscription?.privateKey,
+                    mint: kolTrade?.mint, 
+                    priority: 'high',
+                    watchConfig: subscription.watchConfig ? subscription.watchConfig : null
+                  });
                 }
-              } else {
-                // No token purchase limits - process normally
-                eligibleSubscriptions.push({
-                  agentId: subscription.userId,
-                  tradeType: kolTrade?.tradeType,
-                  amount: subscription?.minAmount,
-                  privateKey: subscription?.privateKey,
-                  mint: kolTrade?.mint, 
-                  priority: 'high',
-                  watchConfig: subscription.watchConfig ? subscription.watchConfig : null
-                });
               }
             }
 

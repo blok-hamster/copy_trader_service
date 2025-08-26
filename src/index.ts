@@ -227,26 +227,29 @@ class CopyTradingService {
       );
       
       for (const subscription of subscriptions) {
-        const notification: NotificationEvent = {
-          id: uuidv4(),
-          type: 'client_notification',
-          payload: {
-            userId: subscription.userId,
-            notificationType: 'trade_detected',
-            data: {
-              trade: {...kolTrade!, name: tokenInfo.name!, symbol: tokenInfo.symbol!, image: imageUrl, prediction: prediction},
-              subscription,
-              estimatedCopyAmount: (data.amountIn || 0) * (subscription.copyPercentage / 100) || 0
-            }
-          },
-          timestamp: new Date(),
-          retryCount: 0,
-          priority: 'high'
-        };
+        
+        if(subscription.isActive === true){
+          const notification: NotificationEvent = {
+            id: uuidv4(),
+            type: 'client_notification',
+            payload: {
+              userId: subscription.userId,
+              notificationType: 'trade_detected',
+              data: {
+                trade: {...kolTrade!, name: tokenInfo.name!, symbol: tokenInfo.symbol!, image: imageUrl, prediction: prediction},
+                subscription,
+                estimatedCopyAmount: (data.amountIn || 0) * (subscription.copyPercentage / 100) || 0
+              }
+            },
+            timestamp: new Date(),
+            retryCount: 0,
+            priority: 'high'
+          };
 
-        //console.log(`📲 Publishing notification for user: ${subscription.userId}`);
-        await this.messageProcessor.publishNotification(notification);
-        //console.log(`✅ Notification published for user: ${subscription.userId}`);
+          //console.log(`📲 Publishing notification for user: ${subscription.userId}`);
+          await this.messageProcessor.publishNotification(notification);
+          //console.log(`✅ Notification published for user: ${subscription.userId}`);
+        }
       }
 
       this.metrics.tradesDetected++;
