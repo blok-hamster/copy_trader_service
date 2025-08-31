@@ -848,7 +848,8 @@ export class HeliusWebhookService extends EventEmitter {
                 account: acc.account,
                 nativeBalanceChange: acc.nativeBalanceChange,
                 tokenBalanceChanges: acc.tokenBalanceChanges || []
-              }))
+              })),
+              timestamp: tx.timestamp
             };
 
             return await parseSwap(txData, address);

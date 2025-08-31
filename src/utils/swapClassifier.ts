@@ -105,6 +105,7 @@ export interface RawTokenAmount {
   export interface TransactionData {
     accountData: Account[];
     tokenTransfers: TokenTransfer[];
+    timestamp?: number;
   }
   
   export type Side = 'buy' | 'sell' | 'unknown';
@@ -117,6 +118,7 @@ export interface RawTokenAmount {
     tokenMint: string;
     tokenAmount: number;
     solAmount: number;
+    timestamp?: number;
   }
   
   // helpers.ts
@@ -201,6 +203,7 @@ export interface RawTokenAmount {
       tokenMint,
       tokenAmount: Math.abs(tokenChange),
       solAmount: Math.abs(solChange),
+      timestamp: tx.timestamp || 0,
     };
     }catch(e){
       console.log(e);
